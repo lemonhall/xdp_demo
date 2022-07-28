@@ -11,7 +11,8 @@ dnf install libbpf libbpf-devel libxdp libxdp-devel xdp-tools bpftool
 * 安装headers
 dnf install kernel-headers
 
-
+* 全部合起来是：
+dnf install clang llvm gcc libbpf libbpf-devel libxdp libxdp-devel xdp-tools bpftool kernel-headers
 
 
 ### 第一个例子
@@ -188,16 +189,17 @@ docker run -it --rm --privileged lemonhall/ebpf bash
 ### 看状态
 
 [root@8cf0c9e8c452 ~]# xdp-loader status
+
 CURRENT XDP PROGRAM STATUS:
 
-Interface        Prio  Program name      Mode     ID   Tag               Chain actions
---------------------------------------------------------------------------------------
-lo                     <No XDP program loaded!>
-tunl0                  <No XDP program loaded!>
-ip6tnl0                <No XDP program loaded!>
-eth0                   <No XDP program loaded!>
+	Interface        Prio  Program name      Mode     ID   Tag               Chain actions
+	--------------------------------------------------------------------------------------
+	lo                     <No XDP program loaded!>
+	tunl0                  <No XDP program loaded!>
+	ip6tnl0                <No XDP program loaded!>
+	eth0                   <No XDP program loaded!>
 
-[root@8cf0c9e8c452 ~]#
+	[root@8cf0c9e8c452 ~]#
 
 
 ### load程序
@@ -205,4 +207,51 @@ eth0                   <No XDP program loaded!>
 
 ### unload一个程序
  xdp-loader unload ip6tnl0 -i 149
+ 
+### 启动一个虚拟的界面
+https://copyprogramming.com/howto/veth-interface-configuration-persistent
+
+
+	[root@5e167b346a92 xdp]# ip link add veth0 type veth peer name veth1
+	[root@5e167b346a92 xdp]# ip addr add 10.1.0.1/24 dev veth0
+	ip addr add 10.1.0.2/24 dev veth1
+	[root@5e167b346a92 xdp]# ip link set veth0 up
+	ip link set veth1 up
+	[root@5e167b346a92 xdp]# ip link
+	1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+	    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+	2: tunl0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000
+	    link/ipip 0.0.0.0 brd 0.0.0.0
+	3: sit0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000
+	    link/sit 0.0.0.0 brd 0.0.0.0
+	4: veth1@veth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+	    link/ether ce:9f:65:54:7a:ba brd ff:ff:ff:ff:ff:ff
+	5: veth0@veth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+	    link/ether 2e:6a:e3:7a:d2:23 brd ff:ff:ff:ff:ff:ff
+	16: eth0@if17: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default
+	    link/ether 02:42:ac:11:00:03 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+	[root@5e167b346a92 xdp]#
+
+	# create veth pair and assing IP address.
+	ip link add veth0 type veth peer name veth1
+	ip addr add 10.1.0.1/24 dev veth0
+	ip addr add 10.1.0.2/24 dev veth1
+	# bring up the interfaces
+	ip link set veth0 up
+	ip link set veth1 up
+	
+* 简单来说就这四句话，这样，就可以安全的搞事情了
+
+然后用ip来挂
+
+ip link set veth1 xdpgeneric obj xdp_drop.o sec xdp_drop
+
+完美，啥问题都没有
+
+* xdp-loader status
+
+![image](https://user-images.githubusercontent.com/637919/181520826-3c34e2a5-3c06-4589-9bac-c887aadd8a87.png)
+
+
+看一下状态，成功load了，非常好
 
