@@ -14,6 +14,10 @@ dnf install kernel-headers
 * 全部合起来是：
 dnf install clang llvm gcc libbpf libbpf-devel libxdp libxdp-devel xdp-tools bpftool kernel-headers
 
+* 再装一些工具包吧
+dnf install iproute iputils net-tools vim ncurses
+
+
 
 ### 第一个例子
 
@@ -260,3 +264,225 @@ ip link set veth1 xdpgeneric obj xdp_drop.o sec xdp_drop
 参考一下这篇文章，理解一下veth的事情先，然后继续
 
 
+* 牢记打包命令
+* docker ps
+* docker commit -m "xdp_demo" -a lemonhall 570a7a9de67c lemonhall/xdp_demo
+
+
+docker run -it --rm --privileged lemonhall/xdp_demo bash
+
+
+### 报错
+xdp-loader load -vv -m skb -s xdp_drop veth1 xdp_drop.o
+
+libxdp: Failed to load dispatcher: Operation not permitted
+
+	[root@9dc66573057e xdp]# xdp-loader load -m skb -s xdp_drop veth1 xdp_drop.o
+	libxdp: Failed to load dispatcher: Operation not permitted
+	libxdp: Failed to load dispatcher: Operation not permitted
+	libxdp: Failed to load dispatcher: Operation not permitted
+	libxdp: Failed to load dispatcher: Operation not permitted
+	libxdp: Failed to load dispatcher: Operation not permitted
+	libxdp: Failed to load dispatcher: Invalid argument
+	Couldn't attach XDP program on iface 'veth1': Invalid argument(-22)
+	[root@9dc66573057e xdp]#
+
+
+### drop所有ipv6的包
+
+	#include <linux/bpf.h>
+	#include <bpf/bpf_helpers.h>
+	#include <linux/if_ether.h>
+	#include <arpa/inet.h>
+
+	struct {
+	        __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	        __type(key, __u32);
+	        __type(value, long);
+	        __uint(max_entries, 1);
+	} rxcnt SEC(".maps");
+
+	SEC("xdp_drop_ipv6")
+	int xdp_drop_ipv6_prog(struct xdp_md *ctx)
+	{
+	        void *data_end = (void *)(long)ctx->data_end;
+	        void *data = (void *)(long)ctx->data;
+	        struct ethhdr *eth = data;
+	        __u16 h_proto;
+	        __u32 key = 0;
+	        long *value;
+
+	        if (data + sizeof(struct ethhdr) > data_end)
+	                return XDP_DROP;
+
+	        h_proto = eth->h_proto;
+
+	        if (h_proto == htons(ETH_P_IPV6)) {
+	                value = bpf_map_lookup_elem(&rxcnt, &key);
+	                if (value)
+	                        *value += 1;
+	                return XDP_DROP;
+	        }
+
+	        return XDP_PASS;
+	}
+
+	char _license[] SEC("license") = "GPL";
+
+xdp_drop_ipv6_count.c
+
+clang -O2 -g -Wall -target bpf -c xdp_drop_ipv6_count.c -o xdp_drop_ipv6_count.o
+
+
+报错，安装
+
+	In file included from xdp_drop_ipv6_count.c:4:
+	In file included from /usr/include/arpa/inet.h:21:
+	In file included from /usr/include/features.h:514:
+	/usr/include/gnu/stubs.h:7:11: fatal error: 'gnu/stubs-32.h' file not found
+	# include <gnu/stubs-32.h>
+	          ^~~~~~~~~~~~~~~~
+	1 error generated.
+
+https://stackoverflow.com/questions/7412548/error-gnu-stubs-32-h-no-such-file-or-directory-while-compiling-nachos-source
+
+dnf install glibc-devel.i686
+
+### 安装
+ip link set veth1 xdpgeneric obj xdp_drop_ipv6_count.o sec xdp_drop_ipv6
+
+
+### bpftool map show
+
+	[root@9dc66573057e xdp]# bpftool map show
+	17: ringbuf  name blocked_packets  flags 0x0
+		key 0B  value 0B  max_entries 16777216  memlock 16793600B
+	18: hash  name allowed_map  flags 0x0
+		key 4B  value 4B  max_entries 10000  memlock 905216B
+	20: lpm_trie  name allowed_trie  flags 0x1
+		key 8B  value 8B  max_entries 1024  memlock 57344B
+	95: percpu_array  name rxcnt  flags 0x0
+		key 4B  value 8B  max_entries 1  memlock 4096B
+		btf_id 95
+	[root@9dc66573057e xdp]#
+
+### bpftool map dump id 95
+
+
+https://zhuanlan.zhihu.com/p/411224778
+
+轻松理解 Docker 网络虚拟化基础之 veth 设备！
+
+ping 10.1.0.2 -I veth0
+
+		[root@9dc66573057e xdp]# ping 10.1.0.2 -I veth0
+		PING 10.1.0.2 (10.1.0.2) from 10.1.0.1 veth0: 56(84) bytes of data.
+		From 10.1.0.1 icmp_seq=1 Destination Host Unreachable
+		From 10.1.0.1 icmp_seq=2 Destination Host Unreachable
+		From 10.1.0.1 icmp_seq=3 Destination Host Unreachable
+		From 10.1.0.1 icmp_seq=4 Destination Host Unreachable
+		From 10.1.0.1 icmp_seq=5 Destination Host Unreachable
+		From 10.1.0.1 icmp_seq=6 Destination Host Unreachable
+		^C
+		--- 10.1.0.2 ping statistics ---
+		8 packets transmitted, 0 received, +6 errors, 100% packet loss, time 7207ms
+		pipe 4
+		[root@9dc66573057e xdp]# bpftool map show
+		17: ringbuf  name blocked_packets  flags 0x0
+			key 0B  value 0B  max_entries 16777216  memlock 16793600B
+		18: hash  name allowed_map  flags 0x0
+			key 4B  value 4B  max_entries 10000  memlock 905216B
+		20: lpm_trie  name allowed_trie  flags 0x1
+			key 8B  value 8B  max_entries 1024  memlock 57344B
+		98: percpu_array  name rxcnt  flags 0x0
+			key 4B  value 8B  max_entries 1  memlock 4096B
+			btf_id 110
+		[root@9dc66573057e xdp]# bpftool map dump id 98
+		[{
+		        "key": 0,
+		        "values": [{
+		                "cpu": 0,
+		                "value": 0
+		            },{
+		                "cpu": 1,
+		                "value": 9
+		            },{
+		                "cpu": 2,
+		                "value": 3
+		            },{
+		                "cpu": 3,
+		                "value": 0
+		            }
+		        ]
+		    }
+		]
+		[root@9dc66573057e xdp]#
+
+
+
+unload掉所有的程序，然后再ping
+
+	[root@9dc66573057e xdp]# ./ip_unload_xdp_drop.sh
+	[root@9dc66573057e xdp]# ping 10.1.0.1 -I veth1
+	PING 10.1.0.1 (10.1.0.1) from 10.1.0.2 veth1: 56(84) bytes of data.
+	64 bytes from 10.1.0.1: icmp_seq=1 ttl=64 time=0.105 ms
+	64 bytes from 10.1.0.1: icmp_seq=2 ttl=64 time=0.055 ms
+	64 bytes from 10.1.0.1: icmp_seq=3 ttl=64 time=0.163 ms
+	64 bytes from 10.1.0.1: icmp_seq=4 ttl=64 time=0.163 ms
+	64 bytes from 10.1.0.1: icmp_seq=5 ttl=64 time=0.068 ms
+	^C
+	--- 10.1.0.1 ping statistics ---
+	5 packets transmitted, 5 received, 0% packet loss, time 4125ms
+	rtt min/avg/max/mdev = 0.055/0.110/0.163/0.045 ms
+	[root@9dc66573057e xdp]# ping 10.1.0.2 -I veth0
+	PING 10.1.0.2 (10.1.0.2) from 10.1.0.1 veth0: 56(84) bytes of data.
+	64 bytes from 10.1.0.2: icmp_seq=1 ttl=64 time=0.034 ms
+	64 bytes from 10.1.0.2: icmp_seq=2 ttl=64 time=0.038 ms
+	64 bytes from 10.1.0.2: icmp_seq=3 ttl=64 time=0.049 ms
+	^C
+	--- 10.1.0.2 ping statistics ---
+	3 packets transmitted, 3 received, 0% packet loss, time 2070ms
+	rtt min/avg/max/mdev = 0.034/0.040/0.049/0.006 ms
+	[root@9dc66573057e xdp]#
+
+再实验一下老的，你看看把，所有都丢了
+
+	[root@9dc66573057e xdp]# ./ip_load_xdp_drop.sh
+	[root@9dc66573057e xdp]# ping 10.1.0.2 -I veth0
+	PING 10.1.0.2 (10.1.0.2) from 10.1.0.1 veth0: 56(84) bytes of data.
+	From 10.1.0.1 icmp_seq=10 Destination Host Unreachable
+	From 10.1.0.1 icmp_seq=11 Destination Host Unreachable
+	From 10.1.0.1 icmp_seq=12 Destination Host Unreachable
+	From 10.1.0.1 icmp_seq=13 Destination Host Unreachable
+	From 10.1.0.1 icmp_seq=14 Destination Host Unreachable
+	From 10.1.0.1 icmp_seq=15 Destination Host Unreachable
+	^C
+	--- 10.1.0.2 ping statistics ---
+	16 packets transmitted, 0 received, +6 errors, 100% packet loss, time 15354ms
+	pipe 4
+	[root@9dc66573057e xdp]#
+
+
+### 保存一下工作成果，收工
+
+	 1 file changed, 62 insertions(+), 8 deletions(-)
+	(base) lemonhall@yuningdeMBP:~/xdp$ docker ps
+	CONTAINER ID   IMAGE                COMMAND   CREATED             STATUS             PORTS     NAMES
+	9dc66573057e   lemonhall/xdp_demo   "bash"    About an hour ago   Up About an hour             vibrant_mclaren
+	(base) lemonhall@yuningdeMBP:~/xdp$ docker commit -m "success demo" -a lemonhall 9dc66573057e lemonhall/xdp_demo
+	sha256:039d04603e83d05484236a9123c1dd0fed772c320827797b9a1c5cf924e1d3b2
+	(base) lemonhall@yuningdeMBP:~/xdp$ docker login
+	Authenticating with existing credentials...
+	Login Succeeded
+	(base) lemonhall@yuningdeMBP:~/xdp$ docker push lemonhall/xdp_demo
+	Using default tag: latest
+	The push refers to repository [docker.io/lemonhall/xdp_demo]
+	09b689274b6e: Pushed
+	6ac06f08a25d: Pushed
+	811f92a7a340: Mounted from library/fedora
+	latest: digest: sha256:895bd4e10c920dc45087b921d46494ab597b67d38f17e258d4a3c4209ab96336 size: 954
+	(base) lemonhall@yuningdeMBP:~/xdp$
+
+我push了一个远程的镜像lemonhall/xdp_demo，到仓库里面去，这样下次就可以接着继续了
+
+真的很棒
