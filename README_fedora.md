@@ -255,3 +255,8 @@ ip link set veth1 xdpgeneric obj xdp_drop.o sec xdp_drop
 
 看一下状态，成功load了，非常好
 
+[Create Your Own Network Namespace](https://itnext.io/create-your-own-network-namespace-90aaebc745d)
+
+参考一下这篇文章，理解一下veth的事情先，然后继续
+
+
